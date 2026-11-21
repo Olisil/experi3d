@@ -1,0 +1,7 @@
+{
+  "title": "Sample house",
+  "subtitle": "A stand-in world to try the sun on. Replace it with your own Blender export.",
+  "model": "model.glb",
+  "location": { "lat": 59.3293, "lon": 18.0686, "timeZone": "Europe/Stockholm", "north": 0, "name": "Stockholm" },
+  "eyeHeight": 1.6
+}

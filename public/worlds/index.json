@@ -1,0 +1,7 @@
+{
+  "default": "smossen",
+  "worlds": [
+    { "id": "smossen", "title": "Stora Mossen" },
+    { "id": "sample", "title": "Sample house" }
+  ]
+}

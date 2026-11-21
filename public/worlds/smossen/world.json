@@ -1,0 +1,9 @@
+{
+  "title": "Stora Mossen",
+  "eyebrow": "Experi3D",
+  "subtitle": "The house and garden at Stora Mossen, Bromma, with the real sun for any date and time.",
+  "model": "model.glb",
+  "location": { "lat": 59.3333, "lon": 17.96213, "timeZone": "Europe/Stockholm", "north": 0, "name": "Stora Mossen" },
+  "spawn": { "position": [-1.15, -2.55, -0.16], "yaw": 0 },
+  "eyeHeight": 1.6
+}

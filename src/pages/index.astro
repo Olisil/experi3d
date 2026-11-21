@@ -1,0 +1,102 @@
+---
+// Experi3D: walk a Blender world and study the sun in it. The viewer is plain HTML + JS in public/.
+// Webflow Cloud sets the base path from the environment's mount path (e.g. /experi3d) at build time;
+// <base> makes every relative URL resolve under it, with or without a trailing slash.
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<base href={base}>
+<!-- Where worlds are stored, e.g. an R2 bucket: content="https://pub-xxxx.r2.dev/". Empty = public/worlds/ in this repo. -->
+<meta name="experi3d-worlds" content="">
+<title>Experi3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<link rel="modulepreload" href="lib/playcanvas.mjs">
+<link rel="modulepreload" href="lib/rapier.mjs">
+<link rel="modulepreload" href="controls.js">
+<link rel="modulepreload" href="gyro.js">
+<link rel="modulepreload" href="sun.js">
+<link rel="modulepreload" href="xrwalk.js">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- Start / pause screen -->
+<div id="intro" class="screen">
+  <div class="card">
+    <p class="eyebrow" id="eyebrow">Experi3D</p>
+    <h1 id="title">Loading…</h1>
+    <p class="subtitle" id="subtitle"></p>
+    <div class="progress" id="progress"><div></div></div>
+    <p class="progress-text" id="progressText"></p>
+    <button id="enter" class="enter" disabled><span id="enterLabel">Loading</span></button>
+    <button id="enterXr" class="enter secondary hidden"></button>
+    <div class="keys how" id="keys"></div>
+    <p class="warn hidden" id="worldWarn"></p>
+    <p class="credit" id="credit"></p>
+  </div>
+</div>
+
+<!-- Error screen -->
+<div id="error" class="screen hidden"><div class="card"><h1 id="errorTitle">Can't open this world</h1><p class="subtitle" id="errorText"></p></div></div>
+
+<!-- In-world UI -->
+<div id="hud" class="hidden">
+  <div class="badge" id="badge"><span id="badgeTitle"></span><span class="badge-room hidden" id="badgePlace"></span></div>
+  <div class="hint" id="hint"></div>
+  <div class="dev hidden" id="dev"></div>
+  <div class="keypad hidden" id="keypad" aria-hidden="true"></div>
+  <div class="tools" id="tools">
+    <button class="round-btn hidden" id="fsBtn" aria-pressed="false"></button>
+    <div class="fs-help hidden" id="fsHelp" role="dialog"><button class="fs-help-x" id="fsHelpX"></button><b id="fsHelpTitle"></b><p id="fsHelpText"></p></div>
+    <button class="round-btn hidden" id="sunBtn" aria-pressed="false"></button>
+    <button class="round-btn gyro-btn hidden" id="gyroBtn" aria-pressed="false"></button>
+    <button class="round-btn xr-btn hidden" id="xrBtn" aria-pressed="false"></button>
+  </div>
+  <!-- walking for real: tracking status, recenter, credit -->
+  <div class="xr-bar hidden" id="xrBar">
+    <span class="xr-dot" id="xrDot"></span><span id="xrText"></span>
+    <button id="xrRecenter"></button>
+    <small id="xrCredit"></small>
+  </div>
+</div>
+
+<!-- Sun and time -->
+<section class="sunbar hidden" id="sunbar" aria-label="Sun">
+  <div class="sun-row">
+    <button class="sun-play" id="sunPlay" aria-pressed="false"></button>
+    <div class="sun-track" id="sunTrack"><input type="range" id="sunTime" min="0" max="1439" step="1" aria-label="Time of day"></div>
+    <output class="sun-clock" id="sunClock">12:00</output>
+  </div>
+  <div class="sun-row wrap">
+    <input type="date" id="sunDate" aria-label="Date">
+    <div class="sun-chips" id="sunChips"></div>
+    <button class="sun-place" id="sunPlaceBtn"><span id="sunPlace"></span></button>
+  </div>
+  <p class="sun-read" id="sunRead"></p>
+  <div class="sun-pop hidden" id="sunPop" role="dialog">
+    <label><span id="lblLat"></span><input id="inLat" inputmode="decimal"></label>
+    <label><span id="lblLon"></span><input id="inLon" inputmode="decimal"></label>
+    <label><span id="lblNorth"></span><input id="inNorth" type="number" step="1"></label>
+    <label class="wide"><span id="lblTz"></span><input id="inTz" list="tzList" autocomplete="off"></label>
+    <datalist id="tzList"></datalist>
+    <div class="sun-pop-actions"><button id="useHere"></button><button id="popDone" class="primary"></button></div>
+    <p class="sun-pop-note" id="popNote"></p>
+  </div>
+</section>
+
+<!-- Touch controls: the whole lower-left corner takes the thumb -->
+<div id="stickZone" class="hidden"><div id="stick"><div id="knob"></div></div></div>
+
+<script is:inline type="module" src="viewer.js"></script>
+</body>
+</html>
