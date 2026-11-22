@@ -15,6 +15,13 @@ const doc = await io.read(input);
 const root = doc.getRoot();
 const tris = () => root.listMeshes().reduce((n, m) => n + m.listPrimitives().reduce((k, p) => k + (p.getIndices()?.getCount() ?? p.getAttribute('POSITION').getCount()) / 3, 0), 0);
 if (drop) for (const n of root.listNodes()) if (drop.test(n.getName())) { console.log('dropped', n.getName()); n.dispose(); }
+// keep only the scene properties Experi3D reads (Blender add-ons park a lot of other data there)
+for (const scene of root.listScenes()) {
+  const ex = scene.getExtras() || {};
+  const keep = Object.fromEntries(['lat', 'lon', 'north', 'timeZone', 'place'].filter((k) => ex[k] !== undefined).map((k) => [k, ex[k]]));
+  scene.setExtras(keep);
+  if (Object.keys(keep).length) console.log('place', JSON.stringify(keep));
+}
 console.log('start', tris(), 'tris', root.listTextures().length, 'textures');
 await doc.transform(dedup(), prune(), weld({ tolerance: 0.0001 }));
 await MeshoptSimplifier.ready;
