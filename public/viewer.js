@@ -525,11 +525,11 @@ async function main() {
   let yaw = 0, pitch = 0, vy = 0, fly = false, smoothEye = null;
   const gyro = new Gyro();
   const xr = new XrWalk(new URL('lib/xr8/', document.baseURI).href);
-  let xrAnchor = null, xrLast = null, xrEye = null;
+  let xrTurn = null, xrLast = null, xrEye = null, xrOwnsGyro = false;
   const xrCarry = [0, 0];   // phone movement not yet handed to the physics step
   const place3 = (x, y, z, yw = yaw, pt = 0) => {
     if (gyro.on) gyro.setYaw(yw);
-    xrAnchor = null;
+    xrTurn = null;
     feet.set(x, y + 0.02, z); prevFeet.copy(feet);
     yaw = yw; pitch = pt; vy = 0; smoothEye = null;
     body.setTranslation({ x, y: y + CENTER + 0.02, z }, true);
@@ -745,16 +745,21 @@ async function main() {
   };
   async function startXr() {
     const motion = askMotionPermission();   // inside the tap, before anything is awaited
-    if (gyro.on) { gyro.disable(); $('gyroBtn').classList.remove('on'); }
     setXrBtn(true);
     xrStatus('starting');
     if (!(await motion)) { setXrBtn(false); xrStatus('off'); flash(T.xrDenied); return; }
+    // The view turns with the phone's own motion sensors (which already know which way the screen is
+    // turned, also on the foldable); the camera tracking only says how far you have moved.
+    if (!gyro.on) { try { await gyro.enable(yaw); xrOwnsGyro = true; } catch { xrOwnsGyro = false; } }
     try { await xr.start(); flash(T.xrHint, 6000); }
     catch (e) { console.warn(e); xrStatus('failed', 'engine'); }
   }
-  function stopXr() { xr.stop(); setXrBtn(false); xrAnchor = null; xrEye = null; pitch = 0; }
+  function stopXr() {
+    xr.stop(); setXrBtn(false); xrTurn = null; xrLast = null; xrEye = null;
+    if (xrOwnsGyro) { gyro.disable(); xrOwnsGyro = false; pitch = 0; }
+  }
   xrBtn?.addEventListener('click', () => (xr.on || xrBtn.classList.contains('on') ? stopXr() : startXr()));
-  $('xrRecenter').addEventListener('click', () => { xrAnchor = null; xrLast = null; });
+  $('xrRecenter').addEventListener('click', () => { xrTurn = null; xrLast = null; });
   if (xrOK) {
     const b = $('enterXr');
     b.textContent = T.walkReal; b.classList.remove('hidden');
@@ -871,7 +876,6 @@ async function main() {
     for (const el of dirEls) el.classList.toggle('on', d[el.dataset.dir]);
     $('keypad').classList.toggle('active', st !== '0000');
   };
-  const qYaw = (q) => yawPitchOf(q).yaw;
   const rotY = (deg, x, z) => { const r = deg * pc.math.DEG_TO_RAD, c = Math.cos(r), s = Math.sin(r); return [c * x + s * z, -s * x + c * z]; };
 
   app.on('update', (dt) => {
@@ -889,21 +893,28 @@ async function main() {
       applySun(); syncUrl();
     }
 
-    // walking for real: how far the phone moved since last frame, turned into the world's frame
+    // walking for real: how far the phone moved since last frame, turned into the world's frame.
+    // xrTurn is the angle between the tracking's world and ours, measured from where the camera points
+    // (a sideways-turned screen in the tracking does not change that), and kept in step slowly.
     let xrRot = null;
     const pose = xr.on ? xr.pose : null;
     if (pose) {
-      if (!xrAnchor) { xrAnchor = { turn: yaw - qYaw(pose.q) }; xrLast = null; }
-      if (xr.tracking === 'normal') {
+      const ep = yawPitchOf(pose.q);
+      const target = yaw - ep.yaw;
+      const level = Math.abs(ep.pitch) < 70 && Math.abs(pitch) < 70;
+      if (xrTurn === null) { if (level || !gyro.on) xrTurn = target; }
+      else if (gyro.on && level) xrTurn += (((target - xrTurn + 540) % 360) - 180) * Math.min(1, dt * 1.5);
+      if (xr.tracking === 'normal' && xrTurn !== null) {
         if (xrLast) {
-          const [dx, dz] = rotY(xrAnchor.turn, pose.p[0] - xrLast[0], pose.p[2] - xrLast[2]);
+          const [dx, dz] = rotY(xrTurn, pose.p[0] - xrLast[0], pose.p[2] - xrLast[2]);
           if (Math.hypot(dx, dz) < 1.5) { xrCarry[0] += dx; xrCarry[1] += dz; }   // ignore jumps when tracking resets
         }
         xrLast = pose.p.slice();
         // the phone's height above the floor is your eye height (crouch to see under things)
         if (pose.p[1] > 0.3 && pose.p[1] < 2.4) xrEye = xrEye === null ? pose.p[1] : xrEye + (pose.p[1] - xrEye) * Math.min(1, dt * 6);
       } else xrLast = null;
-      xrRot = new pc.Quat().mul2(new pc.Quat().setFromEulerAngles(0, xrAnchor.turn, 0), new pc.Quat(pose.q[0], pose.q[1], pose.q[2], pose.q[3]));
+      // without motion sensors of our own, the tracking's camera turns the view
+      if (!gyro.on && xrTurn !== null) xrRot = new pc.Quat().mul2(new pc.Quat().setFromEulerAngles(0, xrTurn, 0), new pc.Quat(pose.q[0], pose.q[1], pose.q[2], pose.q[3]));
     }
 
     acc += dt;
@@ -962,7 +973,7 @@ async function main() {
     showDirections();
     if (EDIT) {
       $('dev').textContent = `pos  ${feet.x.toFixed(2)} ${feet.y.toFixed(2)} ${feet.z.toFixed(2)}\nyaw  ${yaw.toFixed(0)}°  ${fly ? 'FLY' : 'walk'}  ${(1 / ema).toFixed(0)} fps  scale ${renderScale.toFixed(2)}\n`
-        + `sun  az ${sun.pos?.azimuth.toFixed(1)}  el ${sun.pos?.elevation.toFixed(1)}  xr ${xr.tracking}\nF fly · G collision · Shift+P copy spawn`;
+        + `sun  az ${sun.pos?.azimuth.toFixed(1)}  el ${sun.pos?.elevation.toFixed(1)}\n${xr.debug()}\nF fly · G collision · Shift+P copy spawn`;
     }
   });
   if (EDIT) $('dev').classList.remove('hidden');

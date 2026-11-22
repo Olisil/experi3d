@@ -1,20 +1,25 @@
 // Web version of a Blender glTF export for Experi3D: merge duplicates, simplify dense meshes,
 // quantize geometry, and shrink textures to WebP by how much they matter (keeps a model under ~25 MB).
-//   cd tools && npm install && node web-glb.mjs path/to/export.gltf ../public/worlds/<id>/model.glb
+//   cd tools && npm install && node web-glb.mjs path/to/export.gltf ../public/worlds/<id>/model.glb [--drop <regex>]
+//   --drop leaves out objects whose names match (e.g. stray helpers).
 import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { dedup, prune, weld, simplify, quantize, getBounds, listTextureSlots } from '@gltf-transform/functions';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import sharp from 'sharp';
-const [,, input, output] = process.argv;
+const [,, input, output, ...rest] = process.argv;
+const dropAt = rest.indexOf('--drop');
+const drop = dropAt >= 0 ? new RegExp(rest[dropAt + 1]) : null;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
 const doc = await io.read(input);
 const root = doc.getRoot();
 const tris = () => root.listMeshes().reduce((n, m) => n + m.listPrimitives().reduce((k, p) => k + (p.getIndices()?.getCount() ?? p.getAttribute('POSITION').getCount()) / 3, 0), 0);
+if (drop) for (const n of root.listNodes()) if (drop.test(n.getName())) { console.log('dropped', n.getName()); n.dispose(); }
 console.log('start', tris(), 'tris', root.listTextures().length, 'textures');
 await doc.transform(dedup(), prune(), weld({ tolerance: 0.0001 }));
 await MeshoptSimplifier.ready;
-await doc.transform(simplify({ simplifier: MeshoptSimplifier, ratio: 0.35, error: 0.0008, lockBorder: true }));
+// only heavy models are simplified; light ones keep every triangle
+if (tris() > 300000) await doc.transform(simplify({ simplifier: MeshoptSimplifier, ratio: 0.35, error: 0.0008, lockBorder: true }));
 console.log('after simplify', tris());
 
 // how big may each texture be? colour on big surfaces (walls, floors, facade, ground) 1024 px,

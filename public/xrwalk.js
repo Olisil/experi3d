@@ -14,6 +14,21 @@ let loading = null;
 // look-with-phone) and handed to the engine in place of the browser's own value.
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let angles = null, lastAngle = null, watch = null;
+const before = {};   // what the browser itself said, for the ?edit readout
+
+// iPads and the unfolded foldable often browse in "desktop mode" and call themselves a Mac. The engine
+// then decides it isn't on a phone and assumes a fixed landscape screen, so the view comes out on its
+// side. Tell it the truth before it loads: an iPad-class iOS device.
+function presentAsIOS() {
+  const ua = navigator.userAgent;
+  before.ua = ua;
+  if (!isIOS || /iP(hone|ad|od)/.test(ua)) return;
+  const fixed = ua.replace(/\(Macintosh;[^)]*\)/, '(iPad; CPU OS 18_0 like Mac OS X)').replace(/(Version\/[\d.]+)(?![\d.]| Mobile)/, '$1 Mobile/15E148');
+  try { Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => fixed }); } catch { /* read-only */ }
+  try { Object.defineProperty(navigator, 'platform', { configurable: true, get: () => 'iPad' }); } catch { /* read-only */ }
+  before.uaFixed = true;
+}
+
 async function fixScreenAngle() {
   if (angles) return;
   const g = new Gyro();
@@ -21,16 +36,18 @@ async function fixScreenAngle() {
   const t0 = performance.now();
   while (!g._sure && performance.now() - t0 < 1200) await new Promise((r) => setTimeout(r, 40));
   angles = g;
-  const deg = () => g.angle;                         // window.orientation convention: 90 = top of the phone to the left
+  before.windowOrientation = window.orientation; before.screenAngle = screen.orientation?.angle;
+  // window.orientation convention: 90 = top of the phone to the left, -90 = to the right (never 270)
+  const deg = () => (g.angle > 180 ? g.angle - 360 : g.angle);
   try { Object.defineProperty(window, 'orientation', { configurable: true, get: deg }); } catch { /* read-only here */ }
   if (screen.orientation) {
     // the engine reads screen.orientation.angle on Android, and on iPhone counts it the other way round
-    try { Object.defineProperty(screen.orientation, 'angle', { configurable: true, get: () => (isIOS ? (360 - deg()) % 360 : deg()) }); } catch { /* read-only */ }
+    try { Object.defineProperty(screen.orientation, 'angle', { configurable: true, get: () => (isIOS ? (360 - g.angle) % 360 : g.angle) }); } catch { /* read-only */ }
   }
   lastAngle = deg();
   // when the angle settles on a new value, tell the engine the screen turned
   watch = setInterval(() => {
-    if (g.angle !== lastAngle) { lastAngle = g.angle; window.dispatchEvent(new Event('orientationchange')); }
+    if (deg() !== lastAngle) { lastAngle = deg(); window.dispatchEvent(new Event('orientationchange')); }
   }, 100);
 }
 
@@ -85,7 +102,9 @@ export class XrWalk {
   async start() {
     if (this.on) return;
     this._set('starting');
-    const [XR8] = await Promise.all([loadEngine(this.base), fixScreenAngle()]);
+    presentAsIOS();
+    await fixScreenAngle();
+    const XR8 = await loadEngine(this.base);
     // The engine needs a canvas of its own for its image processing. It stays invisible:
     // the 3D view is drawn by the viewer on its own canvas.
     if (!this._canvas) {
@@ -133,6 +152,18 @@ export class XrWalk {
     try { window.XR8.stop(); window.XR8.clearCameraPipelineModules?.(); } catch { /* already stopped */ }
     this.on = false; this.pose = null;
     this._set('off');
+  }
+
+  // what the engine and the sensors think, for ?edit
+  debug() {
+    const X = window.XR8;
+    let est = '', ok = '';
+    try { const d = X?.XrDevice?.deviceEstimate?.(); est = d ? `${d.os || '?'} ${d.osVersion || ''} ${d.model || ''}`.trim() : ''; } catch { /* not ready */ }
+    try { if (X?.XrDevice) ok = X.XrDevice.isDeviceBrowserCompatible({ allowedDevices: X.XrConfig.device().MOBILE }) ? 'phone' : 'NOT phone'; } catch { /* not ready */ }
+    const p = this.pose?.p;
+    return `xr ${this.tracking} · engine sees ${est || '–'} (${ok || '–'})${before.uaFixed ? ' · UA→iPad' : ''}\n`
+      + `screen: browser ${before.windowOrientation ?? '–'}/${before.screenAngle ?? '–'} · gravity ${angles ? angles.angle : '–'}\n`
+      + `phone at ${p ? p.map((v) => v.toFixed(2)).join(' ') : '–'}`;
   }
 
   _set(s) { if (this.tracking !== s) { this.tracking = s; this.onStatus?.(s); } }
