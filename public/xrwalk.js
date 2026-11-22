@@ -4,7 +4,35 @@
 // The 8th Wall engine (lib/xr8) is © Niantic Spatial, Inc., used under the XR Engine License Agreement
 // (lib/xr8/LICENSE). It is loaded only when someone turns this on.
 
+import { Gyro } from './gyro.js';
+
 let loading = null;
+
+// Which way the screen is turned, as the tracking engine will see it. Some devices (the foldable
+// iPhone, some tablets and browsers) report an angle a quarter turn off from the motion sensors,
+// and the engine then sees the world on its side. The angle is read from gravity instead (as for
+// look-with-phone) and handed to the engine in place of the browser's own value.
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let angles = null, lastAngle = null, watch = null;
+async function fixScreenAngle() {
+  if (angles) return;
+  const g = new Gyro();
+  try { await g.enable(0); } catch { return; }      // no sensor: leave the browser's value
+  const t0 = performance.now();
+  while (!g._sure && performance.now() - t0 < 1200) await new Promise((r) => setTimeout(r, 40));
+  angles = g;
+  const deg = () => g.angle;                         // window.orientation convention: 90 = top of the phone to the left
+  try { Object.defineProperty(window, 'orientation', { configurable: true, get: deg }); } catch { /* read-only here */ }
+  if (screen.orientation) {
+    // the engine reads screen.orientation.angle on Android, and on iPhone counts it the other way round
+    try { Object.defineProperty(screen.orientation, 'angle', { configurable: true, get: () => (isIOS ? (360 - deg()) % 360 : deg()) }); } catch { /* read-only */ }
+  }
+  lastAngle = deg();
+  // when the angle settles on a new value, tell the engine the screen turned
+  watch = setInterval(() => {
+    if (g.angle !== lastAngle) { lastAngle = g.angle; window.dispatchEvent(new Event('orientationchange')); }
+  }, 100);
+}
 
 function loadEngine(base) {
   if (window.XR8) return Promise.resolve(window.XR8);
@@ -57,7 +85,7 @@ export class XrWalk {
   async start() {
     if (this.on) return;
     this._set('starting');
-    const XR8 = await loadEngine(this.base);
+    const [XR8] = await Promise.all([loadEngine(this.base), fixScreenAngle()]);
     // The engine needs a canvas of its own for its image processing. It stays invisible:
     // the 3D view is drawn by the viewer on its own canvas.
     if (!this._canvas) {
