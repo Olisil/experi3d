@@ -14,6 +14,7 @@ import { buildKeypad, buildStick, howToHTML, PHONE_FLIP } from './controls.js';
 import { Gyro, yawPitchOf } from './gyro.js';
 import { sunPosition, sunTimes, sunDirection, daylight, zonedToUtc, utcToZoned, hhmm } from './sun.js';
 import { XrWalk, askMotionPermission, XR_CREDIT } from './xrwalk.js';
+import { setupFrame, RoomProbe } from './fx.js';
 
 const libs = Promise.all([import('./lib/playcanvas.mjs'), import('./lib/rapier.mjs')]);
 
@@ -50,6 +51,9 @@ const STRINGS = {
     xrRecenter: 'Recenter', xrFailCamera: 'The camera could not be used', xrFailEngine: 'Tracking could not start on this device',
     xrDenied: 'Motion access was not allowed', xrHint: 'Clear a space to walk in. Walls in the model stop you even where your room continues.',
     noGeometryLight: 'Splats keep the light they were captured with; only the model’s geometry gets the simulated sun.',
+    openGlb: 'Try your own .glb…', dropTitle: 'Drop the .glb here', dropText: 'It replaces the model in this browser only, and you stay where you are.',
+    notGlb: 'Only .glb files can be used', localNote: 'Your own model: {name}. Only in this browser; the published link still shows the original.',
+    useOriginal: 'Back to the published model', loadingLocal: 'Opening {name}…',
     warnDraco: 'The model is compressed (Draco/meshopt): it shows, but you walk through it. Export without compression, or add a collision.glb.',
   },
   sv: {
@@ -75,6 +79,9 @@ const STRINGS = {
     xrRecenter: 'Centrera', xrFailCamera: 'Kameran kunde inte användas', xrFailEngine: 'Spårningen kunde inte starta på den här enheten',
     xrDenied: 'Åtkomst till rörelse tilläts inte', xrHint: 'Röj en yta att gå på. Väggar i modellen stoppar dig även där ditt rum fortsätter.',
     noGeometryLight: 'Splats behåller ljuset de fångades med; bara modellens geometri får den simulerade solen.',
+    openGlb: 'Prova en egen .glb…', dropTitle: 'Släpp .glb-filen här', dropText: 'Den ersätter modellen bara i den här webbläsaren, och du står kvar där du är.',
+    notGlb: 'Bara .glb-filer kan användas', localNote: 'Din egen modell: {name}. Bara i den här webbläsaren; den publicerade länken visar fortfarande originalet.',
+    useOriginal: 'Tillbaka till den publicerade modellen', loadingLocal: 'Öppnar {name}…',
     warnDraco: 'Modellen är komprimerad (Draco/meshopt): den syns, men du går rakt igenom den. Exportera utan komprimering eller lägg till en collision.glb.',
   },
 };
@@ -151,6 +158,29 @@ function toggleFullscreen() {
     (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el, { navigationUI: 'hide' })?.catch?.(() => {});
   }
 }
+
+// ---------------------------------------------------------------- your own model, dropped onto the page
+// Kept in this browser (IndexedDB) so it survives a reload; ?local in the address uses it.
+const idb = (() => {
+  const open = () => new Promise((ok, fail) => {
+    const r = indexedDB.open('experi3d', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('files');
+    r.onsuccess = () => ok(r.result); r.onerror = () => fail(r.error);
+  });
+  const run = async (mode, fn) => {
+    const db = await open();
+    return new Promise((ok, fail) => {
+      const tx = db.transaction('files', mode); const req = fn(tx.objectStore('files'));
+      tx.oncomplete = () => ok(req?.result); tx.onerror = () => fail(tx.error);
+    });
+  };
+  return {
+    get: (k) => run('readonly', (st) => st.get(k)).catch(() => null),
+    put: (k, v) => run('readwrite', (st) => st.put(v, k)),
+    del: (k) => run('readwrite', (st) => st.delete(k)).catch(() => {}),
+  };
+})();
+const LOCAL = qs.has('local');
 
 // ---------------------------------------------------------------- download with progress + resume
 async function download(url, onProgress, tries = 5) {
@@ -298,7 +328,8 @@ async function main() {
     progressText.textContent = `${(got / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(1)} ${T.mb}`;
   };
   $('progress').classList.add('indeterminate');
-  const modelData = download(resolve(world.model), showProgress);
+  const local = LOCAL ? await idb.get('model') : null;
+  const modelData = local?.blob ? local.blob.arrayBuffer() : download(resolve(world.model), showProgress);
   const collisionData = world.collision
     ? fetch(resolve(world.collision)).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null)
     : Promise.resolve(null);
@@ -328,6 +359,9 @@ async function main() {
     toneMapping: pc.TONEMAP_ACES2 ?? pc.TONEMAP_ACES, gammaCorrection: pc.GAMMA_SRGB,
   });
   app.root.addChild(camera);
+  // ambient occlusion, anti-aliasing, bloom (?fx=off for the plain picture)
+  const FX = qs.get('fx') !== 'off';
+  const frame = FX ? (() => { try { return setupFrame(pc, app, camera.camera, { touch, toneMapping: pc.TONEMAP_ACES2 ?? pc.TONEMAP_ACES }); } catch (e) { console.warn('[experi3d] effects', e); return null; } })() : null;
 
   // ---- the model
   const modelBuf = await modelData;
@@ -505,6 +539,7 @@ async function main() {
     if (force || !sun.lastSky || ((Math.abs(key[0] - sun.lastSky[0]) > 1.5 || Math.abs(key[1] - sun.lastSky[1]) > 0.7) && nowT - sun.skyAt > 150)) {
       paintSky(S, L); sun.lastSky = key; sun.skyAt = nowT;
     }
+    sun.dirty = true;
     renderSunUI();
   };
 
@@ -543,6 +578,31 @@ async function main() {
   })();
   const respawn = () => { const [x, y, z] = spawn.position; place3(x, y, z, spawn.yaw || 0, spawn.pitch || 0); };
   respawn();
+  // coming back from swapping in your own model: stand where you stood
+  try {
+    const r = JSON.parse(sessionStorage.getItem('experi3d.restore') || 'null');
+    sessionStorage.removeItem('experi3d.restore');
+    if (r?.feet) place3(r.feet[0], r.feet[1], r.feet[2], r.yaw ?? 0, r.pitch ?? 0);
+    var restored = !!r?.feet;
+  } catch { /* none */ }
+
+  // room reflections and bounced light, captured around you
+  let probe = null;
+  if (FX && qs.get('probe') !== 'off') {
+    try {
+      const mats = new Set();
+      for (const r of model.findComponents('render')) for (const mi of r.meshInstances) if (mi.material instanceof pc.StandardMaterial) mats.add(mi.material);
+      const layers = ['World', 'Skybox'].map((n) => app.scene.layers.getLayerByName(n)?.id).filter((v) => v !== undefined);
+      probe = new RoomProbe(pc, app, {
+        touch, materials: [...mats], layers,
+        cast: (p, d) => {
+          const hit = phys.castRay(new RAPIER.Ray({ x: p.x, y: p.y, z: p.z }, d), 30, true, undefined, undefined, undefined, body);
+          return hit ? (hit.timeOfImpact ?? hit.toi) : null;
+        },
+      });
+      app.scene.exposure = world.exposure * 1.2;   // room light replaces the sky light: a touch more exposure
+    } catch (e) { console.warn('[experi3d] room probe', e); }
+  }
 
   // ---- debug collision overlay (?edit, key G)
   let overlay = null;
@@ -669,12 +729,49 @@ async function main() {
   }
   enter.addEventListener('click', start);
 
+  // ---- try your own .glb: drop it on the page or pick it; it replaces the model in this browser
+  const here = () => sessionStorage.setItem('experi3d.restore', JSON.stringify({ feet: [feet.x, feet.y, feet.z], yaw, pitch }));
+  const reloadWith = (localOn) => {
+    const u = new URL(location.href);
+    if (localOn) u.searchParams.set('local', '1'); else u.searchParams.delete('local');
+    if (u.href === location.href) location.reload(); else location.href = u.href;
+  };
+  async function useOwnModel(file) {
+    if (!file || !/\.glb$/i.test(file.name)) { flash(T.notGlb); return; }
+    $('dropZone').classList.remove('hidden');
+    $('dropTitle').textContent = T.loadingLocal.replace('{name}', file.name); $('dropText').textContent = '';
+    try { await idb.put('model', { name: file.name, blob: file, t: Date.now() }); }
+    catch (e) { console.warn(e); $('dropZone').classList.add('hidden'); flash(T.err); return; }
+    here(); reloadWith(true);
+  }
+  $('openGlb').textContent = T.openGlb;
+  $('openGlb').addEventListener('click', () => $('glbFile').click());
+  $('glbFile').addEventListener('change', (e) => useOwnModel(e.target.files?.[0]));
+  $('dropTitle').textContent = T.dropTitle; $('dropText').textContent = T.dropText;
+  let dragDepth = 0;
+  const isFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  addEventListener('dragenter', (e) => { if (!isFiles(e)) return; e.preventDefault(); dragDepth++; $('dropZone').classList.remove('hidden'); });
+  addEventListener('dragover', (e) => { if (isFiles(e)) e.preventDefault(); });
+  addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('dropZone').classList.add('hidden'); } });
+  addEventListener('drop', (e) => {
+    if (!isFiles(e)) return;
+    e.preventDefault(); dragDepth = 0;
+    useOwnModel(e.dataTransfer.files?.[0]);
+  });
+  if (local) {
+    $('worldWarn').textContent = T.localNote.replace('{name}', local.name);
+    $('worldWarn').classList.remove('hidden');
+    $('badgeTitle').textContent = local.name.replace(/\.glb$/i, '');
+    $('useOriginal').textContent = T.useOriginal; $('useOriginal').classList.remove('hidden');
+    $('useOriginal').addEventListener('click', () => { here(); idb.del('model'); reloadWith(false); });
+  }
+
   const hint = $('hint');
   let hintT = null;
   const flash = (msg, ms = 2600) => { hint.textContent = msg; hint.style.opacity = 1; clearTimeout(hintT); hintT = setTimeout(() => { hint.style.opacity = 0; }, ms); };
   hint.textContent = touch ? T.hintTouch : T.hint;
   hintT = setTimeout(() => { hint.style.opacity = 0; }, 8000);
-  $('badgeTitle').textContent = world.title;
+  if (!local) $('badgeTitle').textContent = world.title;
 
   // ---- round buttons, top right
   const roundBtn = (id, icon, title) => {
@@ -976,6 +1073,7 @@ async function main() {
       camera.setRotation(new pc.Quat(gq[0], gq[1], gq[2], gq[3]));
       ({ yaw, pitch } = yawPitchOf(gq));
     } else camera.setEulerAngles(pitch, yaw, 0);
+    if (probe) { probe.update(camera.getPosition(), sun.dirty); if (probe.pending) sun.dirty = false; }
     showDirections();
     if (EDIT) {
       $('dev').textContent = `pos  ${feet.x.toFixed(2)} ${feet.y.toFixed(2)} ${feet.z.toFixed(2)}\nyaw  ${yaw.toFixed(0)}°  ${fly ? 'FLY' : 'walk'}  ${(1 / ema).toFixed(0)} fps  scale ${renderScale.toFixed(2)}\n`
@@ -983,6 +1081,8 @@ async function main() {
     }
   });
   if (EDIT) $('dev').classList.remove('hidden');
+
+  if (restored) start();   // straight back in after swapping the model
 
   // scripting hook (tests, embedding)
   window.__experi3d = {
@@ -993,7 +1093,7 @@ async function main() {
     teleport: (x, y, z) => place3(x, y, z, yaw, pitch),
     setTime: (date, minutes) => { if (date) sun.date = date; if (minutes !== undefined) sun.minutes = minutes; paintTrack(); applySun(true); },
     setPlace: (p) => { Object.assign(place, p); paintTrack(); applySun(true); },
-    start, pause, xr,
+    start, pause, xr, get probe() { return probe; }, frame,
   };
 }
 

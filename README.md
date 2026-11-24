@@ -46,6 +46,20 @@ model.glb    the world, one GLB (keep it under 25 MB for Webflow Cloud: see tool
 2. `cd tools && npm install && node web-glb.mjs export.gltf ../public/worlds/<id>/model.glb`
    — merges duplicates, simplifies dense meshes, quantizes geometry, WebP textures (1024 px for big surfaces, 512/256 for the rest).
 
+## Trying a new model
+
+Drop a `.glb` anywhere on the page (or "Try your own .glb…" on the start card): it replaces the model
+in that browser only, you stay where you were, and the published link still shows the original.
+"Back to the published model" undoes it. Raw Blender exports work here; tick *Include › Custom Properties*
+so lat/lon/north come along. For phones and the published version, run it through `tools/web-glb.mjs`.
+
+## Image quality
+
+`public/fx.js`: screen-space ambient occlusion (0.8 m), TAA + sharpening on computers, light bloom, and a
+room probe: the room around you is captured into a cubemap (re-captured as you move or the sun changes)
+and used, box-projected to the room's walls, for reflections and the room's own bounced light.
+Nothing in the GLB is needed for it. `?fx=off` gives the plain picture, `?probe=off` drops only the probe.
+
 ## URL
 
 `?w=<id>` world · `?date=2026-06-21&time=15:30` · `?lat=&lon=&north=&tz=&place=` — the page keeps these updated,

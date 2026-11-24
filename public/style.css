@@ -333,3 +333,15 @@ canvas.xr-engine-canvas { position: fixed; left: 0; top: 0; width: 2px !importan
   .sun-read { font-size: 11px; }
 }
 .sunbar { z-index: 8; }
+
+/* ---- try your own model ---- */
+.own { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 14px; }
+.own-btn { padding: 0; border: 0; background: none; color: var(--muted); font: 400 12px Inter, sans-serif; text-decoration: underline;
+  text-underline-offset: 3px; cursor: pointer; }
+.own-btn:hover { color: var(--ink); }
+.drop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; background: rgba(10,10,12,.72);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.drop > div { display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center; max-width: 420px; padding: 40px 36px;
+  border: 1.5px dashed rgba(232,220,199,.55); border-radius: 22px; }
+.drop b { font: 300 26px/1.2 Fraunces, Georgia, serif; }
+.drop span { color: var(--muted); font-size: 13px; line-height: 1.5; }
