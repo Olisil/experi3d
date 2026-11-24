@@ -8,11 +8,13 @@ export function setupFrame(pc, app, cameraComponent, { touch, toneMapping }) {
   cf.rendering.samples = 1;                       // TAA smooths edges on computers; phones stay light
   cf.rendering.renderTargetScale = 1;
   cf.ssao.type = pc.SSAOTYPE_LIGHTING;            // darkens ambient light in corners and contacts, never the sun
-  cf.ssao.intensity = 0.55;
-  cf.ssao.radius = 0.8;                           // metres: corners, skirtings, under furniture
+  // Kept close to real rooms: a soft darkening reaching about 0.4 m into inside corners and under
+  // things, nothing on flat walls or outside corners (bounced light fills most of a real corner).
+  cf.ssao.intensity = 0.35;
+  cf.ssao.radius = 0.4;                           // metres
   cf.ssao.samples = touch ? 8 : 16;
-  cf.ssao.power = 3;
-  cf.ssao.minAngle = 15;
+  cf.ssao.power = 1.5;
+  cf.ssao.minAngle = 22;                          // ignore near-flat geometry: no haze on walls
   cf.ssao.scale = touch ? 0.5 : 1;
   cf.ssao.blurEnabled = true;
   cf.taa.enabled = !touch;
