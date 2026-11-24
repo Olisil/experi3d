@@ -372,11 +372,12 @@ async function main() {
     ? { lat: +ex.lat, lon: +ex.lon, north: ex.north !== undefined ? +ex.north : undefined, timeZone: ex.timeZone || ex.timezone, name: ex.place || ex.location } : {};
   const clean = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''));
   const place = { ...DEFAULT_PLACE, ...clean(fromGlb), ...clean(world.location) };
+  const home = { ...place };   // the world's own place: the URL only records changes from it
   if (qs.get('lat')) place.lat = +qs.get('lat');
   if (qs.get('lon')) place.lon = +qs.get('lon');
   if (qs.get('north')) place.north = +qs.get('north');
   if (qs.get('tz')) place.timeZone = qs.get('tz');
-  if (qs.get('lat') && !qs.get('place')) place.name = '';
+  if ((Math.abs(place.lat - home.lat) > 1e-4 || Math.abs(place.lon - home.lon) > 1e-4) && !qs.get('place')) place.name = '';
   if (qs.get('place')) place.name = qs.get('place');
 
   // ---- optional splat (keeps its own captured light)
@@ -781,8 +782,13 @@ async function main() {
     urlT = setTimeout(() => {
       const u = new URL(location.href);
       u.searchParams.set('date', sun.date); u.searchParams.set('time', hhmm(sun.minutes));
-      for (const [k, v] of [['lat', place.lat], ['lon', place.lon], ['north', place.north || 0], ['tz', place.timeZone]]) u.searchParams.set(k, k === 'lat' || k === 'lon' ? (+v).toFixed(5) : v);
-      if (place.name) u.searchParams.set('place', place.name); else u.searchParams.delete('place');
+      // only what differs from the world's own place goes in the link, so a link never pins an old north
+      const moved = Math.abs(place.lat - home.lat) > 1e-4 || Math.abs(place.lon - home.lon) > 1e-4;
+      const put = (k, v, keep) => (keep ? u.searchParams.set(k, v) : u.searchParams.delete(k));
+      put('lat', (+place.lat).toFixed(5), moved); put('lon', (+place.lon).toFixed(5), moved);
+      put('north', +(place.north || 0).toFixed(1), Math.abs((place.north || 0) - (home.north || 0)) > 0.05);
+      put('tz', place.timeZone, place.timeZone !== home.timeZone);
+      put('place', place.name, moved && !!place.name);
       history.replaceState(null, '', u.href);
     }, 400);
   }
@@ -793,7 +799,7 @@ async function main() {
     if ($('sunDate').value !== sun.date) $('sunDate').value = sun.date;
     const md = sun.date.slice(5);
     $('sunChips').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.md === md));
-    $('sunPlace').innerHTML = `${ICON.pin}${place.name ? `${place.name.replace(/</g, '&lt;')} · ` : ''}${fmtCoord(place.lat, 'N', 'S')}, ${fmtCoord(place.lon, 'E', 'W')}`;
+    $('sunPlace').innerHTML = `${ICON.pin}${place.name ? `${place.name.replace(/</g, '&lt;')} · ` : ''}${fmtCoord(place.lat, 'N', 'S')}, ${fmtCoord(place.lon, 'E', 'W')} · N ${Math.round(place.north || 0)}°`;
     $('badgePlace').textContent = `${hhmm(sun.minutes)} · ${sun.date}`;
     $('badgePlace').classList.remove('hidden');
     if (!p) return;
